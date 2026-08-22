@@ -2,6 +2,8 @@ name: Build Expediente Inteligente APK
 on:
   push:
     branches: [build-expediente-inteligente-apk]
+  pull_request:
+    branches: [build-expediente-inteligente-apk]
   workflow_dispatch:
 jobs:
   build:
