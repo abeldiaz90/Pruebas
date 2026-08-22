@@ -5,6 +5,11 @@ on:
     branches: [master]
     paths:
       - 'ConsultaMX/**'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'ConsultaMX/**'
+      - '.github/workflows/consultamx-v260-temp.yml'
 
 jobs:
   build:
