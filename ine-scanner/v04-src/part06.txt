@@ -1,0 +1,212 @@
+            return isHardStop(s)
+                    || s.contains("INSTITUTO NACIONAL ELECTORAL")
+                    || s.contains("INSTITUTO FEDERAL ELECTORAL")
+                    || s.contains("CREDENCIAL PARA VOTAR")
+                    || s.equals("MÉXICO") || s.equals("MEXICO");
+        }
+
+        private static String join(List<String> list, int from) {
+            StringBuilder b = new StringBuilder();
+            for (int i = from; i < list.size(); i++) {
+                if (b.length() > 0) b.append(' ');
+                b.append(list.get(i));
+            }
+            return b.toString();
+        }
+
+        private static String clean(String s) {
+            return s == null ? "" : s.replaceAll("\\s+", " ")
+                    .replaceAll("^[,;:.-]+|[,;:.-]+$", "").trim();
+        }
+
+        private static boolean empty(String s) {
+            return s == null || s.trim().isEmpty();
+        }
+    }
+
+    static class CryptoManager {
+        private static final String STORE = "AndroidKeyStore";
+        private static final String ALIAS = "INE_SCANNER_AES_V1";
+
+        private SecretKey key() throws Exception {
+            KeyStore ks = KeyStore.getInstance(STORE);
+            ks.load(null);
+            if (!ks.containsAlias(ALIAS)) {
+                KeyGenerator gen = KeyGenerator.getInstance(
+                        KeyProperties.KEY_ALGORITHM_AES, STORE);
+                gen.init(new KeyGenParameterSpec.Builder(
+                        ALIAS, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                        .setKeySize(256)
+                        .build());
+                gen.generateKey();
+            }
+            return ((KeyStore.SecretKeyEntry) ks.getEntry(ALIAS, null)).getSecretKey();
+        }
+
+        String encrypt(String plain) throws Exception {
+            if (plain == null || plain.isEmpty()) return "";
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, key());
+            byte[] iv = cipher.getIV();
+            byte[] enc = cipher.doFinal(
+                    plain.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            ByteBuffer all = ByteBuffer.allocate(1 + iv.length + enc.length);
+            all.put((byte) iv.length).put(iv).put(enc);
+            return Base64.encodeToString(all.array(), Base64.NO_WRAP);
+        }
+
+        String decrypt(String packed) throws Exception {
+            if (packed == null || packed.isEmpty()) return "";
+            byte[] all = Base64.decode(packed, Base64.NO_WRAP);
+            ByteBuffer b = ByteBuffer.wrap(all);
+            int ivLen = b.get() & 0xff;
+            byte[] iv = new byte[ivLen];
+            b.get(iv);
+            byte[] enc = new byte[b.remaining()];
+            b.get(enc);
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, iv));
+            return new String(cipher.doFinal(enc),
+                    java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
+    static class PeopleDb extends SQLiteOpenHelper {
+        private final CryptoManager crypto = new CryptoManager();
+
+        private static final String[] DATA = new String[]{
+                "nombre", "apellido_paterno", "apellido_materno", "curp",
+                "clave_elector", "fecha_nacimiento", "sexo", "anio_registro",
+                "emision", "domicilio", "colonia", "codigo_postal",
+                "municipio", "estado", "seccion", "vigencia",
+                "numero_emision", "cic", "codigo_ocr",
+                "modelo_credencial", "confianza_modelo"
+        };
+
+        PeopleDb(Context context) {
+            super(context, "ine_scanner.db", null, 3);
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE people (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                    "nombre TEXT NOT NULL DEFAULT ''," +
+                    "apellido_paterno TEXT NOT NULL DEFAULT ''," +
+                    "apellido_materno TEXT NOT NULL DEFAULT ''," +
+                    "curp TEXT NOT NULL DEFAULT ''," +
+                    "clave_elector TEXT NOT NULL DEFAULT ''," +
+                    "fecha_nacimiento TEXT NOT NULL DEFAULT ''," +
+                    "sexo TEXT NOT NULL DEFAULT ''," +
+                    "anio_registro TEXT NOT NULL DEFAULT ''," +
+                    "emision TEXT NOT NULL DEFAULT ''," +
+                    "domicilio TEXT NOT NULL DEFAULT ''," +
+                    "colonia TEXT NOT NULL DEFAULT ''," +
+                    "codigo_postal TEXT NOT NULL DEFAULT ''," +
+                    "municipio TEXT NOT NULL DEFAULT ''," +
+                    "estado TEXT NOT NULL DEFAULT ''," +
+                    "seccion TEXT NOT NULL DEFAULT ''," +
+                    "vigencia TEXT NOT NULL DEFAULT ''," +
+                    "numero_emision TEXT NOT NULL DEFAULT ''," +
+                    "cic TEXT NOT NULL DEFAULT ''," +
+                    "codigo_ocr TEXT NOT NULL DEFAULT ''," +
+                    "modelo_credencial TEXT NOT NULL DEFAULT ''," +
+                    "confianza_modelo TEXT NOT NULL DEFAULT ''," +
+                    "created_at TEXT NOT NULL)");
+        }
+
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            if (oldVersion < 2) {
+                addColumn(db, "fecha_nacimiento");
+                addColumn(db, "sexo");
+                addColumn(db, "anio_registro");
+                addColumn(db, "emision");
+            }
+            if (oldVersion < 3) {
+                addColumn(db, "numero_emision");
+                addColumn(db, "cic");
+                addColumn(db, "codigo_ocr");
+                addColumn(db, "modelo_credencial");
+                addColumn(db, "confianza_modelo");
+            }
+        }
+
+        private void addColumn(SQLiteDatabase db, String name) {
+            try {
+                db.execSQL("ALTER TABLE people ADD COLUMN " + name +
+                        " TEXT NOT NULL DEFAULT ''");
+            } catch (Exception ignored) {}
+        }
+
+        long insert(Map<String, String> p) throws Exception {
+            ContentValues v = new ContentValues();
+            for (String key : DATA) v.put(key, crypto.encrypt(p.get(key)));
+            v.put("created_at", new SimpleDateFormat(
+                    "yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()));
+            return getWritableDatabase().insertOrThrow("people", null, v);
+        }
+
+        List<Map<String, String>> search(String query, int limit) throws Exception {
+            List<Map<String, String>> all = list(Math.max(limit, 500));
+            String q = normalizeSearch(query);
+            if (q.isEmpty()) {
+                return all.size() <= limit ? all : new ArrayList<>(all.subList(0, limit));
+            }
+
+            List<Map<String, String>> out = new ArrayList<>();
+            for (Map<String, String> r : all) {
+                String haystack = normalizeSearch(
+                        safe(r.get("nombre")) + " " +
+                        safe(r.get("apellido_paterno")) + " " +
+                        safe(r.get("apellido_materno")) + " " +
+                        safe(r.get("curp")) + " " +
+                        safe(r.get("clave_elector")) + " " +
+                        safe(r.get("cic")) + " " +
+                        safe(r.get("codigo_ocr")) + " " +
+                        safe(r.get("modelo_credencial")));
+                if (haystack.contains(q)) {
+                    out.add(r);
+                    if (out.size() >= limit) break;
+                }
+            }
+            return out;
+        }
+
+        List<Map<String, String>> list(int limit) throws Exception {
+            List<Map<String, String>> out = new ArrayList<>();
+            try (Cursor c = getReadableDatabase().rawQuery(
+                    "SELECT * FROM people ORDER BY id DESC LIMIT ?",
+                    new String[]{String.valueOf(limit)})) {
+                while (c.moveToNext()) {
+                    Map<String, String> r = new HashMap<>();
+                    r.put("id", String.valueOf(
+                            c.getLong(c.getColumnIndexOrThrow("id"))));
+                    r.put("created_at",
+                            c.getString(c.getColumnIndexOrThrow("created_at")));
+                    for (String key : DATA) {
+                        int idx = c.getColumnIndex(key);
+                        r.put(key, idx >= 0 ? crypto.decrypt(c.getString(idx)) : "");
+                    }
+                    out.add(r);
+                }
+            }
+            return out;
+        }
+
+        private String normalizeSearch(String s) {
+            if (s == null) return "";
+            return java.text.Normalizer.normalize(
+                    s.toUpperCase(Locale.ROOT),
+                    java.text.Normalizer.Form.NFD)
+                    .replaceAll("\\p{M}", "")
+                    .replaceAll("[^A-Z0-9]", "");
+        }
+
+        private String safe(String s) {
+            return s == null ? "" : s;
+        }
+    }
+}
