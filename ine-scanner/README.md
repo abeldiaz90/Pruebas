@@ -10,3 +10,5 @@
 - SQLite local con datos sensibles cifrados mediante AES-256/GCM y Android Keystore.
 - Migración desde la base de v0.2 conservando registros previos.
 - No verifica autenticidad ante INE; es captura estructurada.
+
+Build v0.3.
