@@ -1,7 +1,5 @@
 name: Build Expediente Inteligente APK
 on:
-  push:
-    branches: [build-expediente-inteligente-apk]
   pull_request:
     branches: [build-expediente-inteligente-apk]
   workflow_dispatch:
@@ -17,13 +15,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Unpack Android project
-        run: unzip -q expediente-src.zip
+      - name: Reassemble and validate project
+        run: |
+          cat apk_parts/part_00 apk_parts/part_01 apk_parts/part_02 apk_parts/part_03 > expediente-src.zip
+          test "$(stat -c%s expediente-src.zip)" = "19997"
+          unzip -t expediente-src.zip
+          unzip -q expediente-src.zip
       - name: Build debug APK
         working-directory: ExpedienteInteligente
         run: gradle --no-daemon assembleDebug
+      - name: Validate APK
+        run: |
+          test -s ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk
+          file ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk
+          sha256sum ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ExpedienteInteligente-APK
           path: ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
