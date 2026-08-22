@@ -12,6 +12,7 @@
         <activity android:name=".SepCedulaRpaV2Activity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".SepCedulaFlexibleRpaActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".SepCedulaFallbackRpaActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".SepCedulaByCurpResolvedActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".AutoMainActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".CedulaMainActivity" android:screenOrientation="portrait" android:exported="true">
