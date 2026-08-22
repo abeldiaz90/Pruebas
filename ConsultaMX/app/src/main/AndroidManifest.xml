@@ -9,8 +9,10 @@
         <activity android:name=".AutoOfficialWebActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".HandsFreeCurpRpaActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".SepCedulaRpaActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".SepCedulaRpaV2Activity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="false" />
-        <activity android:name=".AutoMainActivity" android:screenOrientation="portrait" android:exported="true">
+        <activity android:name=".AutoMainActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".CedulaMainActivity" android:screenOrientation="portrait" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
