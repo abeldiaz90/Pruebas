@@ -11,7 +11,7 @@ import android.widget.TextView;
 import java.util.Locale;
 
 public class AutoMainActivity extends MainActivity {
-    static final int REQ_CURP_RPA=2201;
+    static final int REQ_CURP_RPA=2301;
     String pendingCurp="", pendingRfc="";
     long pendingQueryId=-1;
 
@@ -19,7 +19,7 @@ public class AutoMainActivity extends MainActivity {
         base("Consulta de persona",true);
         LinearLayout c=card();
         c.addView(tv("CURP",18,NAVY,true));
-        c.addView(tv("La consulta cuesta $1. Primero revisamos la base local; si no existe, el RPA abre RENAPO automáticamente.",13,MUTED,false));
+        c.addView(tv("La consulta cuesta $1. Primero revisamos la base local; si no existe, ConsultaMX consulta RENAPO automáticamente.",13,MUTED,false));
         EditText curp=input("18 caracteres"); curp.setAllCaps(true);
         EditText rfc=input("RFC opcional para listas SAT"); rfc.setAllCaps(true);
         add(c,curp,56); add(c,rfc,56);
@@ -37,7 +37,7 @@ public class AutoMainActivity extends MainActivity {
             String status=hit?cached.getString(1):"SIN_VERIFICAR";
             String checked=hit?cached.getString(2):"";
             cached.close();
-            long q=db.chargePersonQuery(user,x,rr,hit?"CACHE":"RPA_RENAPO_AUTOMATICO");
+            long q=db.chargePersonQuery(user,x,rr,hit?"CACHE":"RPA_RENAPO_HANDS_FREE");
             if(q<0){toast("No se pudo cobrar la consulta");return;}
             if(hit){showPersonResult(x,rr,status,checked,true,q);return;}
             pendingCurp=x; pendingRfc=rr; pendingQueryId=q;
@@ -46,13 +46,13 @@ public class AutoMainActivity extends MainActivity {
     }
 
     void launchCurpRpa(String curp){
-        base("Verificando CURP…",true);
+        base("Consultando fuente oficial…",true);
         LinearLayout c=card();
-        c.addView(tv("RPA RENAPO EN PROCESO",20,TEAL,true));
-        c.addView(tv("Abriendo la fuente oficial, capturando la CURP y esperando el resultado. Si RENAPO muestra CAPTCHA, sólo resuélvelo; el robot continuará solo.",14,NAVY,false));
+        c.addView(tv("RENAPO EN PROCESO",20,TEAL,true));
+        c.addView(tv("ConsultaMX está capturando la CURP, enviando el formulario y esperando la respuesta automáticamente. No necesitas pulsar el botón Buscar de RENAPO.",14,NAVY,false));
         c.addView(tv("Folio Q-"+pendingQueryId+" · cargo $1.00 ya aplicado",12,MUTED,false));
         body.addView(c);
-        Intent i=new Intent(this,AutoOfficialWebActivity.class);
+        Intent i=new Intent(this,HandsFreeCurpRpaActivity.class);
         i.putExtra("url",RENAPO);
         i.putExtra("curp",curp);
         startActivityForResult(i,REQ_CURP_RPA);
@@ -66,20 +66,16 @@ public class AutoMainActivity extends MainActivity {
         String status=hit?c.getString(1):"RPA_NO_COMPLETADO";
         String checked=hit?c.getString(2):"";
         c.close();
-        if(hit){
-            showPersonResult(pendingCurp,pendingRfc,status,checked,true,pendingQueryId);
-        }else{
-            showRpaFailure();
-        }
+        if(hit){showPersonResult(pendingCurp,pendingRfc,status,checked,true,pendingQueryId);}else{showRpaFailure();}
     }
 
     void showRpaFailure(){
         base("Verificación pendiente",true);
         LinearLayout c=card();
-        c.addView(tv("EL RPA NO OBTUVO RESULTADO",19,AMBER,true));
-        c.addView(tv("No se guardó la CURP como verificada. Puede ocurrir si RENAPO cambió su página, hubo problema de red o cerraste el navegador antes de terminar.",14,NAVY,false));
+        c.addView(tv("NO SE OBTUVO RESPUESTA OFICIAL",19,AMBER,true));
+        c.addView(tv("No se guardó la CURP como verificada. Puede ocurrir si RENAPO cambió su formulario, no respondió o bloqueó la automatización.",14,NAVY,false));
         c.addView(tv("No se realizará un segundo cobro al reintentar este folio.",13,GREEN,true));
-        Button retry=btn("Reintentar RPA sin volver a cobrar"); add(c,retry,52);
+        Button retry=btn("Reintentar automáticamente sin cobrar"); add(c,retry,52);
         Button home=btn("Volver al inicio"); home.setBackground(bg(NAVY,14)); add(c,home,48);
         body.addView(c);
         retry.setOnClickListener(v->launchCurpRpa(pendingCurp));
