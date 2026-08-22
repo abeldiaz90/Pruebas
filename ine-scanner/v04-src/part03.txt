@@ -1,0 +1,210 @@
+            List<Map<String, String>> list = db.search(query == null ? "" : query, 100);
+            if (list.isEmpty()) {
+                records.setText((query == null || query.trim().isEmpty())
+                        ? "Aún no hay personas guardadas."
+                        : "No encontré registros para: " + query.trim());
+                return;
+            }
+
+            StringBuilder out = new StringBuilder();
+            for (Map<String, String> r : list) {
+                out.append("#").append(r.get("id")).append("  ")
+                        .append(r.get("nombre")).append(" ")
+                        .append(r.get("apellido_paterno")).append(" ")
+                        .append(r.get("apellido_materno")).append("\n")
+                        .append("CURP: ").append(mask(r.get("curp")))
+                        .append("\nClave: ").append(mask(r.get("clave_elector")))
+                        .append("   Vigencia: ").append(r.get("vigencia"))
+                        .append("\nSección: ").append(r.get("seccion"))
+                        .append("   Sexo: ").append(r.get("sexo"))
+                        .append("\nModelo: ").append(r.get("modelo_credencial"))
+                        .append("   Confianza: ").append(r.get("confianza_modelo"))
+                        .append("\nCIC: ").append(mask(r.get("cic")))
+                        .append("   OCR: ").append(mask(r.get("codigo_ocr")))
+                        .append("\nCaptura: ").append(r.get("created_at"))
+                        .append("\n\n");
+            }
+            records.setText(out.toString().trim());
+        } catch (Exception e) {
+            records.setText("No se pudo abrir la base local: " + e.getMessage());
+        }
+    }
+
+    private String mask(String s) {
+        if (s == null || s.length() < 8) return s == null ? "" : s;
+        return s.substring(0, 4) + "••••••" + s.substring(s.length() - 4);
+    }
+
+    private void clearForm() {
+        clearDetectedFields();
+        preview.setImageDrawable(null);
+        cleanupCurrentCameraFile();
+        rawFront = "";
+        rawBack = "";
+        currentSide = "FRENTE";
+        ocrButton.setEnabled(false);
+        status.setText("Toma una foto con buena luz, sin reflejos y con la credencial ocupando casi todo el encuadre.");
+    }
+
+    private String value(String key) {
+        EditText e = fields.get(key);
+        return e == null ? "" : e.getText().toString().trim();
+    }
+
+    private void setField(String key, String value) {
+        EditText e = fields.get(key);
+        if (e != null && value != null && !value.trim().isEmpty()) e.setText(value.trim());
+    }
+
+    private Button button(String s) {
+        Button b = new Button(this);
+        b.setText(s);
+        b.setTextSize(15);
+        b.setAllCaps(false);
+        return b;
+    }
+
+    private TextView text(String s, int sp, boolean bold) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextSize(sp);
+        if (bold) t.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
+        return t;
+    }
+
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
+    private void showError(String message) {
+        new AlertDialog.Builder(this)
+                .setTitle("INE Scanner")
+                .setMessage(message)
+                .setPositiveButton("Aceptar", null)
+                .show();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (db != null) db.close();
+        cleanupCurrentCameraFile();
+    }
+
+    static class IneParser {
+        private static final Pattern VALID_CURP = Pattern.compile(
+                "^[A-Z]{4}\\d{6}[HM][A-Z]{5}[A-Z0-9]\\d$");
+        private static final Pattern DATE = Pattern.compile(
+                "(\\d{1,2})\\s*[/\\-.]\\s*(\\d{1,2})\\s*[/\\-.]\\s*((?:19|20)?\\d{2})");
+        private static final Pattern SECTION = Pattern.compile(
+                "SECCI[ÓO]N\\s*[:#-]?\\s*(\\d{3,5})");
+        private static final Pattern VIG_RANGE = Pattern.compile(
+                "VIGENCIA\\s*[:#-]?\\s*(20\\d{2})\\s*[-/]\\s*(20\\d{2})");
+        private static final Pattern VIG_SINGLE = Pattern.compile(
+                "VIGENCIA\\s*[:#-]?\\s*(20\\d{2})");
+        private static final Pattern YEAR = Pattern.compile("\\b(19\\d{2}|20\\d{2})\\b");
+        private static final Pattern CP = Pattern.compile("(?:C\\.?P\\.?\\s*)?(\\d{5})");
+        private static final Pattern ELECTOR_KEY = Pattern.compile(
+                "\\b[A-Z]{5,8}\\d{6,10}[HM]\\d{2,4}\\b");
+        private static final Pattern LONG_NUMBER = Pattern.compile("\\b\\d{9,18}\\b");
+
+        static Map<String, String> parse(String front, String back) {
+            Map<String, String> f = new HashMap<>();
+            String frontUpper = normalize(front);
+            String backUpper = normalize(back);
+            String all = frontUpper + "\n" + backUpper;
+
+            List<String> frontLines = lines(frontUpper);
+            List<String> backLines = lines(backUpper);
+
+            ModelGuess model = detectModel(frontUpper, backUpper);
+            f.put("modelo_credencial", model.name);
+            f.put("confianza_modelo", model.confidence + "%");
+
+            parseCurp(frontLines, frontUpper, f);
+            parseName(frontLines, f);
+            parseElectorKey(frontLines, frontUpper, f);
+            parseDateSexYears(frontLines, frontUpper, f);
+            parseSectionVigency(frontUpper, f);
+            parseAddress(frontLines, f);
+            parseEmission(frontLines, frontUpper, f);
+            parseBackIdentifiers(backLines, backUpper, model, f);
+
+            // Fallback: algunos layouts desplazan campos o el OCR mezcla ambas caras.
+            if (empty(f.get("curp"))) parseCurp(lines(all), all, f);
+            if (empty(f.get("clave_elector"))) parseElectorKey(lines(all), all, f);
+            if (empty(f.get("seccion"))) parseSectionVigency(all, f);
+
+            // CURP permite corroborar sexo y fecha, pero nunca inventamos la CURP.
+            if (!empty(f.get("curp"))) {
+                String c = f.get("curp");
+                if (empty(f.get("sexo"))) {
+                    char sx = c.charAt(10);
+                    if (sx == 'H' || sx == 'M') f.put("sexo", String.valueOf(sx));
+                }
+                if (empty(f.get("fecha_nacimiento"))) {
+                    try {
+                        int yy = Integer.parseInt(c.substring(4, 6));
+                        int mm = Integer.parseInt(c.substring(6, 8));
+                        int dd = Integer.parseInt(c.substring(8, 10));
+                        int nowYY = Calendar.getInstance().get(Calendar.YEAR) % 100;
+                        int yyyy = yy <= nowYY ? 2000 + yy : 1900 + yy;
+                        f.put("fecha_nacimiento",
+                                String.format(Locale.US, "%02d/%02d/%04d", dd, mm, yyyy));
+                    } catch (Exception ignored) {}
+                }
+            }
+            return f;
+        }
+
+        static class ModelGuess {
+            final String name;
+            final int confidence;
+            ModelGuess(String name, int confidence) {
+                this.name = name;
+                this.confidence = confidence;
+            }
+        }
+
+        private static ModelGuess detectModel(String front, String back) {
+            String all = front + "\n" + back;
+            int score = 40;
+
+            if (all.contains("INSTITUTO FEDERAL ELECTORAL")) {
+                // D suele mostrar IFE y CIC en reverso; C usa OCR.
+                if (containsCicSignal(back) || back.contains("QR")) {
+                    return new ModelGuess("Modelo D / IFE", 88);
+                }
+                if (back.contains("OCR") || hasLikelyOcrNumber(back)) {
+                    return new ModelGuess("Modelo C / IFE", 82);
+                }
+                return new ModelGuess("IFE legado (C/D)", 74);
+            }
+
+            if (all.contains("INSTITUTO NACIONAL ELECTORAL")) score += 20;
+            if (front.contains("CREDENCIAL PARA VOTAR")) score += 8;
+
+            // Modelos E-H usan CIC; I/J corresponden al rediseño 2026.
+            if (front.contains("GÉNERO") || front.contains("GENERO") ||
+                    all.contains("AUTOIDENTIFIC") || all.contains("AFROMEX")) {
+                return new ModelGuess("Modelo I/J (2026+)", Math.min(98, score + 25));
+            }
+
+            if (containsCicSignal(back) || findLikelyCic(back) != null) {
+                if (front.contains("EXTRANJERO") || front.contains("DESDE EL EXTRANJERO")) {
+                    return new ModelGuess("Modelo F (extranjero)", Math.min(95, score + 20));
+                }
+                if (all.contains("QR")) {
+                    return new ModelGuess("Modelo G/H (2019+)", Math.min(94, score + 22));
+                }
+                return new ModelGuess("Modelo E/F/G/H", Math.min(90, score + 18));
+            }
+
+            if (all.contains("INSTITUTO NACIONAL ELECTORAL")) {
+                return new ModelGuess("INE (modelo por confirmar)", Math.min(82, score));
+            }
+            return new ModelGuess("No identificado", 35);
+        }
+
+        private static boolean containsCicSignal(String s) {
+            return s.contains("CIC") || s.contains("IDENTIFICACION DE CREDENCIAL")

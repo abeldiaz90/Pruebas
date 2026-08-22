@@ -1,0 +1,210 @@
+
+        searchBox = new EditText(this);
+        searchBox.setHint("Nombre, CURP, clave, CIC u OCR");
+        searchBox.setSingleLine(true);
+        searchBox.setTextSize(16);
+        searchBox.setPadding(dp(12), dp(8), dp(12), dp(8));
+        searchBox.setBackgroundColor(Color.WHITE);
+        root.addView(searchBox, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
+        LinearLayout searchActions = new LinearLayout(this);
+        searchActions.setOrientation(LinearLayout.HORIZONTAL);
+        Button search = button("Buscar");
+        Button all = button("Ver todos");
+        searchActions.addView(search, new LinearLayout.LayoutParams(0, dp(50), 1));
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(0, dp(50), 1);
+        ap.setMarginStart(dp(8));
+        searchActions.addView(all, ap);
+        LinearLayout.LayoutParams sap = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+        sap.topMargin = dp(8);
+        root.addView(searchActions, sap);
+
+        TextView dbTitle = text("Registros locales", 20, true);
+        dbTitle.setPadding(0, dp(20), 0, dp(8));
+        root.addView(dbTitle);
+        records = text("", 14, false);
+        records.setTextColor(Color.rgb(30, 41, 59));
+        records.setPadding(dp(12), dp(10), dp(12), dp(10));
+        records.setBackgroundColor(Color.WHITE);
+        root.addView(records);
+
+        cameraFront.setOnClickListener(v -> capturePhoto("FRENTE"));
+        galleryFront.setOnClickListener(v -> chooseImage("FRENTE"));
+        cameraBack.setOnClickListener(v -> capturePhoto("REVERSO"));
+        galleryBack.setOnClickListener(v -> chooseImage("REVERSO"));
+        ocrButton.setOnClickListener(v -> runOcr());
+        save.setOnClickListener(v -> savePerson());
+        clear.setOnClickListener(v -> clearForm());
+        search.setOnClickListener(v -> loadRecords(searchBox.getText().toString()));
+        all.setOnClickListener(v -> {
+            searchBox.setText("");
+            loadRecords("");
+        });
+
+        return scroll;
+    }
+
+    private void capturePhoto(String side) {
+        try {
+            cleanupCurrentCameraFile();
+            currentSide = side;
+            File dir = new File(getCacheDir(), "camera");
+            if (!dir.exists() && !dir.mkdirs()) {
+                throw new IOException("No se pudo crear almacenamiento temporal.");
+            }
+            currentCameraFile = File.createTempFile("INE_" + side + "_", ".jpg", dir);
+            currentImageUri = FileProvider.getUriForFile(
+                    this, getPackageName() + ".fileprovider", currentCameraFile);
+
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            if (intent.resolveActivity(getPackageManager()) == null) {
+                throw new IOException("No encontré una aplicación de cámara.");
+            }
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, currentImageUri);
+            intent.setClipData(ClipData.newRawUri("INE_" + side, currentImageUri));
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent,
+                    side.equals("FRENTE") ? REQ_CAMERA_FRONT : REQ_CAMERA_BACK);
+        } catch (Exception e) {
+            cleanupCurrentCameraFile();
+            showError("No se pudo abrir la cámara: " + e.getMessage());
+        }
+    }
+
+    private void chooseImage(String side) {
+        cleanupCurrentCameraFile();
+        currentSide = side;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        startActivityForResult(intent,
+                side.equals("FRENTE") ? REQ_GALLERY_FRONT : REQ_GALLERY_BACK);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        boolean isFront = requestCode == REQ_CAMERA_FRONT || requestCode == REQ_GALLERY_FRONT;
+        boolean isCamera = requestCode == REQ_CAMERA_FRONT || requestCode == REQ_CAMERA_BACK;
+        if (!isFront && requestCode != REQ_CAMERA_BACK && requestCode != REQ_GALLERY_BACK) return;
+        currentSide = isFront ? "FRENTE" : "REVERSO";
+
+        if (isCamera) {
+            if (resultCode == RESULT_OK && currentImageUri != null && currentCameraFile != null
+                    && currentCameraFile.exists() && currentCameraFile.length() > 0) {
+                showImage(currentImageUri);
+                status.setText(currentSide + " cargado. Pulsa “Leer lado actual con OCR”.");
+            } else {
+                cleanupCurrentCameraFile();
+                status.setText("La cámara no devolvió una foto válida del " +
+                        currentSide.toLowerCase(Locale.ROOT) + ".");
+            }
+        } else if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+            currentImageUri = data.getData();
+            currentCameraFile = null;
+            try {
+                getContentResolver().takePersistableUriPermission(
+                        currentImageUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) {}
+            showImage(currentImageUri);
+            status.setText(currentSide + " cargado desde galería. Pulsa “Leer lado actual con OCR”.");
+        }
+    }
+
+    private void showImage(Uri uri) {
+        try {
+            preview.setImageDrawable(null);
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                Bitmap bmp = BitmapFactory.decodeStream(in);
+                if (bmp == null) throw new IOException("La imagen no pudo decodificarse.");
+                preview.setImageBitmap(bmp);
+            }
+            ocrButton.setEnabled(true);
+        } catch (Exception e) {
+            preview.setImageDrawable(null);
+            ocrButton.setEnabled(false);
+            status.setText("No pude cargar la imagen: " + e.getMessage());
+        }
+    }
+
+    private void runOcr() {
+        if (currentImageUri == null) return;
+        ocrButton.setEnabled(false);
+        status.setText("Leyendo " + currentSide.toLowerCase(Locale.ROOT) + "…");
+
+        try {
+            InputImage image = InputImage.fromFilePath(this, currentImageUri);
+            TextRecognizer recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+            recognizer.process(image)
+                    .addOnSuccessListener(result -> {
+                        String raw = result.getText() == null ? "" : result.getText();
+                        if (currentSide.equals("FRENTE")) rawFront = raw;
+                        else rawBack = raw;
+
+                        Map<String, String> parsed = IneParser.parse(rawFront, rawBack);
+
+                        // El frente inicia el expediente; el reverso lo complementa.
+                        if (currentSide.equals("FRENTE")) clearDetectedFields();
+                        for (String k : fieldOrder) {
+                            String v = parsed.get(k);
+                            if (v != null && !v.trim().isEmpty()) setField(k, v);
+                        }
+
+                        int populated = 0;
+                        for (String k : fieldOrder) if (!value(k).isEmpty()) populated++;
+
+                        String sides = (!rawFront.trim().isEmpty() ? "frente ✓" : "frente pendiente") +
+                                " · " + (!rawBack.trim().isEmpty() ? "reverso ✓" : "reverso pendiente");
+                        status.setText("OCR " + currentSide.toLowerCase(Locale.ROOT) +
+                                " completado: " + populated + " campos. " + sides);
+
+                        recognizer.close();
+                        ocrButton.setEnabled(true);
+                    })
+                    .addOnFailureListener(e -> {
+                        recognizer.close();
+                        status.setText("No se pudo procesar la imagen: " + e.getMessage());
+                        ocrButton.setEnabled(true);
+                    });
+        } catch (IOException e) {
+            status.setText("No se pudo abrir la imagen: " + e.getMessage());
+            ocrButton.setEnabled(true);
+        }
+    }
+
+    private void clearDetectedFields() {
+        for (EditText e : fields.values()) e.setText("");
+    }
+
+    private void cleanupCurrentCameraFile() {
+        if (currentCameraFile != null) {
+            try {
+                if (currentCameraFile.exists()) currentCameraFile.delete();
+            } catch (Exception ignored) {}
+        }
+        currentCameraFile = null;
+        currentImageUri = null;
+    }
+
+    private void savePerson() {
+        if (value("nombre").isEmpty() && value("curp").isEmpty() && value("clave_elector").isEmpty()) {
+            Toast.makeText(this, "Captura al menos nombre, CURP o clave de elector.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        try {
+            Map<String, String> p = new HashMap<>();
+            for (String key : fieldOrder) p.put(key, value(key));
+            long id = db.insert(p);
+            Toast.makeText(this, "Guardado local cifrado. ID " + id, Toast.LENGTH_LONG).show();
+            clearForm();
+            loadRecords("");
+        } catch (Exception e) {
+            showError("No se pudo guardar: " + e.getMessage());
+        }
+    }
+
+    private void loadRecords(String query) {
+        try {

@@ -1,0 +1,210 @@
+package com.syncro.inescanner;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ContentValues;
+import android.content.Context;
+import android.content.Intent;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Color;
+import android.net.Uri;
+import android.os.Bundle;
+import android.provider.MediaStore;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.core.content.FileProvider;
+
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.security.KeyStore;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+
+public class MainActivity extends Activity {
+    private static final int REQ_CAMERA_FRONT = 1001;
+    private static final int REQ_GALLERY_FRONT = 1002;
+    private static final int REQ_CAMERA_BACK = 1003;
+    private static final int REQ_GALLERY_BACK = 1004;
+
+    private Uri currentImageUri;
+    private File currentCameraFile;
+    private String currentSide = "FRENTE";
+    private String rawFront = "";
+    private String rawBack = "";
+    private ImageView preview;
+    private TextView status;
+    private TextView records;
+    private Button ocrButton;
+    private EditText searchBox;
+    private final Map<String, EditText> fields = new HashMap<>();
+    private PeopleDb db;
+
+    private final String[] fieldOrder = new String[]{
+            "nombre", "apellido_paterno", "apellido_materno", "curp", "clave_elector",
+            "fecha_nacimiento", "sexo", "anio_registro", "emision",
+            "domicilio", "colonia", "codigo_postal", "municipio", "estado",
+            "seccion", "vigencia", "numero_emision", "cic", "codigo_ocr",
+            "modelo_credencial", "confianza_modelo"
+    };
+
+    private final String[] fieldLabels = new String[]{
+            "Nombre(s)", "Apellido paterno", "Apellido materno", "CURP", "Clave de elector",
+            "Fecha de nacimiento", "Sexo / Género", "Año de registro", "Emisión",
+            "Domicilio", "Colonia", "Código postal", "Municipio", "Estado",
+            "Sección electoral", "Vigencia", "Número de emisión", "CIC", "Código OCR",
+            "Modelo detectado", "Confianza del modelo"
+    };
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        db = new PeopleDb(this);
+        setContentView(buildUi());
+        loadRecords("");
+    }
+
+    private View buildUi() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(18), dp(18), dp(36));
+        root.setBackgroundColor(Color.rgb(245, 247, 251));
+        scroll.addView(root, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView title = text("INE Scanner v0.4", 28, true);
+        title.setTextColor(Color.rgb(17, 24, 39));
+        root.addView(title);
+
+        TextView subtitle = text("Motor multi-formato IFE/INE: captura frente y reverso, revisa los datos y guárdalos cifrados.", 15, false);
+        subtitle.setTextColor(Color.DKGRAY);
+        subtitle.setPadding(0, dp(4), 0, dp(14));
+        root.addView(subtitle);
+
+        TextView captureTitle = text("Captura de credencial", 20, true);
+        captureTitle.setPadding(0, dp(6), 0, dp(8));
+        root.addView(captureTitle);
+
+        LinearLayout frontActions = new LinearLayout(this);
+        frontActions.setOrientation(LinearLayout.HORIZONTAL);
+        Button cameraFront = button("Foto frente");
+        Button galleryFront = button("Galería frente");
+        frontActions.addView(cameraFront, new LinearLayout.LayoutParams(0, dp(52), 1));
+        LinearLayout.LayoutParams fgp = new LinearLayout.LayoutParams(0, dp(52), 1);
+        fgp.setMarginStart(dp(8));
+        frontActions.addView(galleryFront, fgp);
+        root.addView(frontActions);
+
+        LinearLayout backActions = new LinearLayout(this);
+        backActions.setOrientation(LinearLayout.HORIZONTAL);
+        Button cameraBack = button("Foto reverso");
+        Button galleryBack = button("Galería reverso");
+        LinearLayout.LayoutParams bap = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
+        bap.topMargin = dp(8);
+        backActions.addView(cameraBack, new LinearLayout.LayoutParams(0, dp(52), 1));
+        LinearLayout.LayoutParams bgp = new LinearLayout.LayoutParams(0, dp(52), 1);
+        bgp.setMarginStart(dp(8));
+        backActions.addView(galleryBack, bgp);
+        root.addView(backActions, bap);
+
+        preview = new ImageView(this);
+        preview.setAdjustViewBounds(true);
+        preview.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        preview.setBackgroundColor(Color.rgb(229, 231, 235));
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(250));
+        ip.topMargin = dp(12);
+        root.addView(preview, ip);
+
+        ocrButton = button("Leer lado actual con OCR");
+        ocrButton.setEnabled(false);
+        LinearLayout.LayoutParams op = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(54));
+        op.topMargin = dp(10);
+        root.addView(ocrButton, op);
+
+        status = text("Toma una foto con buena luz, sin reflejos y con la credencial ocupando casi todo el encuadre.", 13, false);
+        status.setTextColor(Color.rgb(71, 85, 105));
+        status.setPadding(0, dp(10), 0, dp(10));
+        root.addView(status);
+
+        TextView warning = text("Reconoce distintos modelos IFE/INE y combina frente + reverso. El OCR no certifica autenticidad; revisa los datos antes de guardar.", 12, false);
+        warning.setTextColor(Color.rgb(146, 64, 14));
+        warning.setBackgroundColor(Color.rgb(255, 247, 237));
+        warning.setPadding(dp(12), dp(10), dp(12), dp(10));
+        root.addView(warning);
+
+        TextView formTitle = text("Datos detectados", 20, true);
+        formTitle.setPadding(0, dp(18), 0, dp(4));
+        root.addView(formTitle);
+
+        for (int i = 0; i < fieldOrder.length; i++) {
+            TextView label = text(fieldLabels[i], 13, true);
+            label.setPadding(0, dp(8), 0, dp(4));
+            root.addView(label);
+            EditText input = new EditText(this);
+            input.setTextSize(16);
+            input.setSingleLine(!fieldOrder[i].equals("domicilio"));
+            input.setPadding(dp(12), dp(8), dp(12), dp(8));
+            input.setBackgroundColor(Color.WHITE);
+            if (fieldOrder[i].equals("modelo_credencial") || fieldOrder[i].equals("confianza_modelo")) {
+                input.setEnabled(false);
+            }
+            fields.put(fieldOrder[i], input);
+            root.addView(input, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    fieldOrder[i].equals("domicilio") ? dp(84) : dp(50)));
+        }
+
+        Button save = button("Guardar persona cifrada");
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
+        sp.topMargin = dp(18);
+        root.addView(save, sp);
+
+        Button clear = button("Limpiar formulario");
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+        cp.topMargin = dp(8);
+        root.addView(clear, cp);
+
+        TextView searchTitle = text("Buscar expedientes", 20, true);
+        searchTitle.setPadding(0, dp(24), 0, dp(6));
+        root.addView(searchTitle);
