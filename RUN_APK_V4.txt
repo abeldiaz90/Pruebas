@@ -1,0 +1,1 @@
+Run APK build after Kotlin dependency normalization.
