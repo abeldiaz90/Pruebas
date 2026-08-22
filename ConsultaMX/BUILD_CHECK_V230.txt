@@ -1,1 +1,0 @@
-Build check trigger for ConsultaMX v2.3.0 hands-free CURP RPA.
