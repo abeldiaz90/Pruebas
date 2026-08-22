@@ -2,16 +2,18 @@ package com.syncro.inescanner;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Environment;
 import android.provider.MediaStore;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
@@ -26,12 +28,16 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.core.content.FileProvider;
+
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.security.KeyStore;
 import java.text.SimpleDateFormat;
@@ -54,7 +60,7 @@ public class MainActivity extends Activity {
     private static final int REQ_GALLERY = 1002;
 
     private Uri currentImageUri;
-    private boolean currentImageIsTemporaryCamera = false;
+    private File currentCameraFile;
     private ImageView preview;
     private TextView status;
     private TextView records;
@@ -90,7 +96,7 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.rgb(245, 247, 251));
         scroll.addView(root, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView title = text("INE Scanner", 28, true);
+        TextView title = text("INE Scanner v0.2", 28, true);
         title.setTextColor(Color.rgb(17, 24, 39));
         root.addView(title);
 
@@ -113,7 +119,7 @@ public class MainActivity extends Activity {
         preview.setAdjustViewBounds(true);
         preview.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         preview.setBackgroundColor(Color.rgb(229, 231, 235));
-        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(230));
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(250));
         ip.topMargin = dp(12);
         root.addView(preview, ip);
 
@@ -123,12 +129,12 @@ public class MainActivity extends Activity {
         op.topMargin = dp(10);
         root.addView(ocrButton, op);
 
-        status = text("Toma una foto con buena luz, sin reflejos y ocupando casi todo el encuadre.", 13, false);
+        status = text("Toma una foto con buena luz, sin reflejos y con la credencial ocupando casi todo el encuadre.", 13, false);
         status.setTextColor(Color.rgb(71, 85, 105));
         status.setPadding(0, dp(10), 0, dp(10));
         root.addView(status);
 
-        TextView warning = text("MVP: extrae texto visible; no certifica que la credencial sea auténtica. Revisa los datos antes de guardar.", 12, false);
+        TextView warning = text("Extrae texto visible; no certifica autenticidad. En esta versión se mejoró la captura por cámara y el parser de nombre/domicilio.", 12, false);
         warning.setTextColor(Color.rgb(146, 64, 14));
         warning.setBackgroundColor(Color.rgb(255, 247, 237));
         warning.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -149,7 +155,7 @@ public class MainActivity extends Activity {
             input.setBackgroundColor(Color.WHITE);
             fields.put(fieldOrder[i], input);
             root.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    fieldOrder[i].equals("domicilio") ? dp(76) : dp(50)));
+                    fieldOrder[i].equals("domicilio") ? dp(84) : dp(50)));
         }
 
         Button save = button("Guardar persona cifrada");
@@ -181,26 +187,28 @@ public class MainActivity extends Activity {
 
     private void capturePhoto() {
         try {
-            String name = "INE_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date()) + ".jpg";
-            ContentValues values = new ContentValues();
-            values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
-            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-            values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/INEScannerTemp");
-            values.put(MediaStore.Images.Media.IS_PENDING, 1);
-            Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
-            if (uri == null) throw new IOException("No se pudo crear la imagen temporal.");
-            currentImageUri = uri;
-            currentImageIsTemporaryCamera = true;
+            File dir = new File(getCacheDir(), "camera");
+            if (!dir.exists() && !dir.mkdirs()) throw new IOException("No se pudo crear almacenamiento temporal.");
+            currentCameraFile = File.createTempFile("INE_", ".jpg", dir);
+            currentImageUri = FileProvider.getUriForFile(this,
+                    getPackageName() + ".fileprovider", currentCameraFile);
+
             Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-            intent.putExtra(MediaStore.EXTRA_OUTPUT, uri);
+            if (intent.resolveActivity(getPackageManager()) == null) {
+                throw new IOException("No encontré una aplicación de cámara.");
+            }
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, currentImageUri);
+            intent.setClipData(ClipData.newRawUri("INE", currentImageUri));
             intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivityForResult(intent, REQ_CAMERA);
         } catch (Exception e) {
+            cleanupCameraFile();
             showError("No se pudo abrir la cámara: " + e.getMessage());
         }
     }
 
     private void chooseImage() {
+        cleanupCameraFile();
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("image/*");
@@ -211,25 +219,39 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQ_CAMERA) {
-            if (resultCode == RESULT_OK && currentImageUri != null) {
-                ContentValues done = new ContentValues();
-                done.put(MediaStore.Images.Media.IS_PENDING, 0);
-                getContentResolver().update(currentImageUri, done, null, null);
+            if (resultCode == RESULT_OK && currentImageUri != null && currentCameraFile != null
+                    && currentCameraFile.exists() && currentCameraFile.length() > 0) {
                 showImage(currentImageUri);
+                status.setText("Foto cargada correctamente. Pulsa “Leer INE con OCR”.");
             } else {
-                deleteTemporaryCameraImage();
+                cleanupCameraFile();
+                status.setText("La cámara no devolvió una foto válida. Intenta de nuevo.");
             }
         } else if (requestCode == REQ_GALLERY && resultCode == RESULT_OK && data != null && data.getData() != null) {
             currentImageUri = data.getData();
-            currentImageIsTemporaryCamera = false;
+            currentCameraFile = null;
+            try {
+                getContentResolver().takePersistableUriPermission(currentImageUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) {}
             showImage(currentImageUri);
+            status.setText("Imagen cargada desde galería. Pulsa “Leer INE con OCR”.");
         }
     }
 
     private void showImage(Uri uri) {
-        preview.setImageURI(uri);
-        ocrButton.setEnabled(true);
-        status.setText("Imagen lista. Pulsa “Leer INE con OCR”.");
+        try {
+            preview.setImageDrawable(null);
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                Bitmap bmp = BitmapFactory.decodeStream(in);
+                if (bmp == null) throw new IOException("La imagen no pudo decodificarse.");
+                preview.setImageBitmap(bmp);
+            }
+            ocrButton.setEnabled(true);
+        } catch (Exception e) {
+            preview.setImageDrawable(null);
+            ocrButton.setEnabled(false);
+            status.setText("No pude cargar la imagen: " + e.getMessage());
+        }
     }
 
     private void runOcr() {
@@ -243,19 +265,20 @@ public class MainActivity extends Activity {
                     .addOnSuccessListener(result -> {
                         String raw = result.getText() == null ? "" : result.getText();
                         Map<String, String> parsed = IneParser.parse(raw);
+                        clearDetectedFields();
                         for (String k : fieldOrder) setField(k, parsed.get(k));
+                        int populated = 0;
+                        for (String k : fieldOrder) if (!value(k).isEmpty()) populated++;
                         status.setText(raw.trim().isEmpty()
                                 ? "No pude leer texto. Intenta otra foto con más luz y menos reflejo."
-                                : "OCR completado. Revisa los campos antes de guardar.");
+                                : "OCR completado: " + populated + " campos detectados. Revisa antes de guardar.");
                         recognizer.close();
-                        deleteTemporaryCameraImage();
-                        ocrButton.setEnabled(currentImageUri != null);
+                        ocrButton.setEnabled(true);
                     })
                     .addOnFailureListener(e -> {
                         recognizer.close();
                         status.setText("No se pudo procesar la imagen: " + e.getMessage());
-                        deleteTemporaryCameraImage();
-                        ocrButton.setEnabled(currentImageUri != null);
+                        ocrButton.setEnabled(true);
                     });
         } catch (IOException e) {
             status.setText("No se pudo abrir la imagen: " + e.getMessage());
@@ -263,12 +286,16 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void deleteTemporaryCameraImage() {
-        if (currentImageIsTemporaryCamera && currentImageUri != null) {
-            try { getContentResolver().delete(currentImageUri, null, null); } catch (Exception ignored) {}
-            currentImageIsTemporaryCamera = false;
-            currentImageUri = null;
+    private void clearDetectedFields() {
+        for (EditText e : fields.values()) e.setText("");
+    }
+
+    private void cleanupCameraFile() {
+        if (currentCameraFile != null) {
+            try { if (currentCameraFile.exists()) currentCameraFile.delete(); } catch (Exception ignored) {}
         }
+        currentCameraFile = null;
+        currentImageUri = null;
     }
 
     private void savePerson() {
@@ -318,13 +345,11 @@ public class MainActivity extends Activity {
     }
 
     private void clearForm() {
-        for (EditText e : fields.values()) e.setText("");
+        clearDetectedFields();
         preview.setImageDrawable(null);
-        if (currentImageIsTemporaryCamera) deleteTemporaryCameraImage();
-        currentImageUri = null;
-        currentImageIsTemporaryCamera = false;
+        cleanupCameraFile();
         ocrButton.setEnabled(false);
-        status.setText("Toma una foto con buena luz, sin reflejos y ocupando casi todo el encuadre.");
+        status.setText("Toma una foto con buena luz, sin reflejos y con la credencial ocupando casi todo el encuadre.");
     }
 
     private String value(String key) {
@@ -363,6 +388,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         if (db != null) db.close();
+        cleanupCameraFile();
     }
 
     static class IneParser {
@@ -371,10 +397,12 @@ public class MainActivity extends Activity {
         private static final Pattern VIG_RANGE = Pattern.compile("VIGENCIA\\s*[:#-]?\\s*(20\\d{2})\\s*[-/]\\s*(20\\d{2})");
         private static final Pattern VIG_SINGLE = Pattern.compile("VIGENCIA\\s*[:#-]?\\s*(20\\d{2})");
         private static final Pattern CP = Pattern.compile("(?:C\\.?P\\.?\\s*)?(\\d{5})");
+        private static final Pattern ELECTOR_KEY = Pattern.compile("\\b[A-Z]{5,8}\\d{6,10}[HM]\\d{2,4}\\b");
 
         static Map<String, String> parse(String text) {
             Map<String, String> f = new HashMap<>();
             if (text == null) return f;
+
             String normalized = text.replace('|', 'I').replaceAll("[ \\t]+", " ");
             String upper = normalized.toUpperCase(Locale.ROOT);
             List<String> lines = new ArrayList<>();
@@ -383,7 +411,8 @@ public class MainActivity extends Activity {
                 if (!line.isEmpty()) lines.add(line);
             }
 
-            Matcher m = CURP.matcher(upper.replace(" ", ""));
+            String compact = upper.replaceAll("[^A-Z0-9]", "");
+            Matcher m = CURP.matcher(compact);
             if (m.find()) f.put("curp", m.group());
 
             m = SECTION.matcher(upper);
@@ -396,55 +425,113 @@ public class MainActivity extends Activity {
                 if (m.find()) f.put("vigencia", m.group(1));
             }
 
-            int nameIdx = labelIndex(lines, "NOMBRE");
-            if (nameIdx >= 0) {
-                List<String> n = afterLabel(lines, nameIdx, "NOMBRE", 4);
-                n.removeIf(IneParser::isMetadata);
-                if (n.size() >= 3) {
-                    f.put("apellido_paterno", n.get(0));
-                    f.put("apellido_materno", n.get(1));
-                    f.put("nombre", join(n, 2));
-                } else if (n.size() == 2) {
-                    f.put("apellido_paterno", n.get(0));
-                    f.put("nombre", n.get(1));
-                } else if (n.size() == 1) {
-                    f.put("nombre", n.get(0));
-                }
-            }
+            parseName(lines, f);
+            parseElectorKey(lines, upper, f);
+            parseAddress(lines, f);
 
-            int keyIdx = labelIndex(lines, "CLAVE DE ELECTOR");
-            if (keyIdx >= 0) {
-                String candidate = inlineAfter(lines.get(keyIdx), "CLAVE DE ELECTOR");
-                if (candidate.isEmpty() && keyIdx + 1 < lines.size()) candidate = lines.get(keyIdx + 1);
-                candidate = candidate.replaceAll("[^A-Z0-9]", "");
-                if (candidate.length() >= 12 && candidate.length() <= 24) f.put("clave_elector", candidate);
-            }
-
-            int addrIdx = labelIndex(lines, "DOMICILIO");
-            if (addrIdx >= 0) {
-                List<String> a = afterLabel(lines, addrIdx, "DOMICILIO", 4);
-                List<String> good = new ArrayList<>();
-                for (String line : a) {
-                    if (isMetadata(line)) break;
-                    good.add(line);
-                }
-                if (!good.isEmpty()) {
-                    String address = String.join(", ", good);
-                    f.put("domicilio", address);
-                    Matcher cp = CP.matcher(address);
-                    String last = "";
-                    while (cp.find()) last = cp.group(1);
-                    if (!last.isEmpty()) f.put("codigo_postal", last);
-                }
-            }
             return f;
         }
 
-        private static List<String> afterLabel(List<String> lines, int idx, String label, int max) {
+        private static void parseName(List<String> lines, Map<String, String> f) {
+            int start = labelIndex(lines, "NOMBRE");
+            if (start < 0) return;
+            List<String> block = collectUntil(lines, start, "NOMBRE",
+                    new String[]{"DOMICILIO", "CLAVE DE ELECTOR", "CURP", "FECHA DE NACIMIENTO", "SEXO"}, 6);
+
+            List<String> names = new ArrayList<>();
+            for (String s : block) {
+                s = stripKnownLabels(s);
+                if (s.isEmpty() || isMetadata(s) || containsDigits(s)) continue;
+                if (s.length() < 2) continue;
+                names.add(s);
+            }
+
+            if (names.size() >= 3) {
+                f.put("apellido_paterno", names.get(0));
+                f.put("apellido_materno", names.get(1));
+                f.put("nombre", join(names, 2));
+            } else if (names.size() == 2) {
+                f.put("apellido_paterno", names.get(0));
+                f.put("nombre", names.get(1));
+            } else if (names.size() == 1) {
+                f.put("nombre", names.get(0));
+            }
+        }
+
+        private static void parseElectorKey(List<String> lines, String upper, Map<String, String> f) {
+            int idx = labelIndex(lines, "CLAVE DE ELECTOR");
+            if (idx >= 0) {
+                String candidate = inlineAfter(lines.get(idx), "CLAVE DE ELECTOR");
+                if (candidate.isEmpty() && idx + 1 < lines.size()) candidate = lines.get(idx + 1);
+                candidate = candidate.replaceAll("[^A-Z0-9]", "");
+                if (candidate.length() >= 15 && candidate.length() <= 22) {
+                    f.put("clave_elector", candidate);
+                    return;
+                }
+            }
+            Matcher m = ELECTOR_KEY.matcher(upper.replace(" ", ""));
+            if (m.find()) f.put("clave_elector", m.group());
+        }
+
+        private static void parseAddress(List<String> lines, Map<String, String> f) {
+            int start = labelIndex(lines, "DOMICILIO");
+            if (start < 0) return;
+
+            List<String> block = collectUntil(lines, start, "DOMICILIO",
+                    new String[]{"CLAVE DE ELECTOR", "CURP", "FECHA DE NACIMIENTO", "SEXO", "AÑO DE REGISTRO", "SECCIÓN", "SECCION", "VIGENCIA"}, 6);
+
+            List<String> good = new ArrayList<>();
+            for (String s : block) {
+                s = stripKnownLabels(s);
+                if (s.isEmpty() || isMetadata(s)) continue;
+                good.add(s);
+            }
+            if (good.isEmpty()) return;
+
+            String address = String.join(", ", good);
+            f.put("domicilio", address);
+
+            Matcher cp = CP.matcher(address);
+            String cpValue = "";
+            while (cp.find()) cpValue = cp.group(1);
+            if (!cpValue.isEmpty()) f.put("codigo_postal", cpValue);
+
+            for (String line : good) {
+                String u = line.toUpperCase(Locale.ROOT);
+                if (u.contains("COL.") || u.contains("COLONIA")) {
+                    String c = u.replaceFirst("^.*?\\b(?:COL\\.?|COLONIA)\\s*", "");
+                    c = c.replaceAll("\\bC\\.?P\\.?\\s*\\d{5}\\b", "");
+                    c = c.replaceAll("\\b\\d{5}\\b", "");
+                    c = clean(c.replace(",", " "));
+                    if (!c.isEmpty()) f.put("colonia", c);
+                }
+            }
+
+            if (good.size() >= 2) {
+                String last = good.get(good.size() - 1).replaceAll("\\b\\d{5}\\b", "").trim();
+                String[] parts = last.split("[,;/]");
+                if (parts.length >= 2) {
+                    String municipio = clean(parts[0]);
+                    String estado = clean(parts[parts.length - 1]);
+                    if (!municipio.isEmpty()) f.put("municipio", municipio);
+                    if (!estado.isEmpty()) f.put("estado", estado);
+                }
+            }
+        }
+
+        private static List<String> collectUntil(List<String> lines, int idx, String label, String[] stops, int max) {
             List<String> out = new ArrayList<>();
             String inline = inlineAfter(lines.get(idx), label);
             if (!inline.isEmpty()) out.add(inline);
-            for (int i = idx + 1; i < lines.size() && out.size() < max; i++) out.add(lines.get(i));
+            for (int i = idx + 1; i < lines.size() && out.size() < max; i++) {
+                String line = lines.get(i);
+                boolean stop = false;
+                for (String s : stops) {
+                    if (line.contains(s)) { stop = true; break; }
+                }
+                if (stop) break;
+                out.add(line);
+            }
             return out;
         }
 
@@ -459,10 +546,26 @@ public class MainActivity extends Activity {
             return clean(line.substring(p + label.length()).replaceFirst("^[:# -]+", ""));
         }
 
+        private static String stripKnownLabels(String s) {
+            return clean(s.replace("NOMBRE", "")
+                    .replace("DOMICILIO", "")
+                    .replace("CLAVE DE ELECTOR", "")
+                    .replace("CURP", "")
+                    .replace("SECCIÓN", "")
+                    .replace("SECCION", "")
+                    .replace("VIGENCIA", ""));
+        }
+
+        private static boolean containsDigits(String s) {
+            return s.matches(".*\\d.*");
+        }
+
         private static boolean isMetadata(String s) {
-            return s.contains("CLAVE DE ELECTOR") || s.startsWith("CURP") || s.contains("SECCI")
-                    || s.contains("VIGENCIA") || s.contains("AÑO DE REGISTRO") || s.contains("FECHA DE NACIMIENTO")
-                    || s.contains("SEXO") || s.contains("INSTITUTO NACIONAL ELECTORAL");
+            return s.contains("DOMICILIO") || s.contains("CLAVE DE ELECTOR") || s.startsWith("CURP")
+                    || s.contains("SECCI") || s.contains("VIGENCIA") || s.contains("AÑO DE REGISTRO")
+                    || s.contains("FECHA DE NACIMIENTO") || s.equals("SEXO") || s.startsWith("SEXO ")
+                    || s.contains("INSTITUTO NACIONAL ELECTORAL") || s.contains("CREDENCIAL PARA VOTAR")
+                    || s.contains("MÉXICO") || s.contains("MEXICO");
         }
 
         private static String join(List<String> list, int from) {
@@ -474,7 +577,9 @@ public class MainActivity extends Activity {
             return b.toString();
         }
 
-        private static String clean(String s) { return s == null ? "" : s.replaceAll("\\s+", " ").trim(); }
+        private static String clean(String s) {
+            return s == null ? "" : s.replaceAll("\\s+", " ").replaceAll("^[,;:.-]+|[,;:.-]+$", "").trim();
+        }
     }
 
     static class CryptoManager {
