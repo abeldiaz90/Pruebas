@@ -34,12 +34,12 @@ jobs:
       - name: Install SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Build debug APK v0.2
+      - name: Build debug APK v0.3
         run: gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: INE-Scanner-v0.2-debug
+          name: INE-Scanner-v0.3-debug
           path: ine-scanner/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
