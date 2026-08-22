@@ -1,0 +1,210 @@
+
+            m = VIG_RANGE.matcher(upper);
+            if (m.find()) f.put("vigencia", m.group(1) + "-" + m.group(2));
+            else {
+                m = VIG_SINGLE.matcher(upper);
+                if (m.find()) f.put("vigencia", m.group(1));
+            }
+        }
+
+        private static void parseName(List<String> lines, Map<String, String> f) {
+            int start = labelIndexAny(lines, new String[]{"NOMBRE", "NOMBRES"});
+            if (start < 0) return;
+
+            String label = lines.get(start).contains("NOMBRES") ? "NOMBRES" : "NOMBRE";
+            List<String> block = collectUntil(lines, start, label,
+                    new String[]{"DOMICILIO", "DIRECCIÓN", "DIRECCION", "CLAVE DE ELECTOR",
+                            "CURP", "FECHA DE NACIMIENTO", "SEXO", "GÉNERO", "GENERO"}, 6);
+
+            List<String> names = new ArrayList<>();
+            for (String s : block) {
+                s = stripKnownLabels(s);
+                if (s.isEmpty() || isMetadata(s) || containsDigits(s)) continue;
+                if (s.length() < 2) continue;
+                names.add(s);
+            }
+
+            if (names.size() >= 3) {
+                f.put("apellido_paterno", names.get(0));
+                f.put("apellido_materno", names.get(1));
+                f.put("nombre", join(names, 2));
+            } else if (names.size() == 2) {
+                f.put("apellido_paterno", names.get(0));
+                f.put("nombre", names.get(1));
+            } else if (names.size() == 1) {
+                f.put("nombre", names.get(0));
+            }
+        }
+
+        private static void parseElectorKey(List<String> lines, String upper, Map<String, String> f) {
+            int idx = labelIndexAny(lines,
+                    new String[]{"CLAVE DE ELECTOR", "CLAVE ELECTOR", "ELECTOR"});
+            if (idx >= 0) {
+                String line = lines.get(idx);
+                String candidate = line;
+                for (String label : new String[]{"CLAVE DE ELECTOR", "CLAVE ELECTOR", "ELECTOR"}) {
+                    if (line.contains(label)) {
+                        candidate = inlineAfter(line, label);
+                        break;
+                    }
+                }
+                if (candidate.isEmpty() && idx + 1 < lines.size()) candidate = lines.get(idx + 1);
+                candidate = candidate.replaceAll("[^A-Z0-9]", "");
+                if (candidate.length() >= 15 && candidate.length() <= 22) {
+                    f.put("clave_elector", candidate);
+                    return;
+                }
+            }
+            Matcher m = ELECTOR_KEY.matcher(upper.replace(" ", ""));
+            if (m.find()) f.put("clave_elector", m.group());
+        }
+
+        private static void parseAddress(List<String> lines, Map<String, String> f) {
+            int start = labelIndexAny(lines, new String[]{"DOMICILIO", "DIRECCIÓN", "DIRECCION"});
+            if (start < 0) return;
+            String label = lines.get(start).contains("DOMICILIO") ? "DOMICILIO" :
+                    (lines.get(start).contains("DIRECCIÓN") ? "DIRECCIÓN" : "DIRECCION");
+
+            List<String> block = collectUntil(lines, start, label,
+                    new String[]{"CLAVE DE ELECTOR", "CURP", "FECHA DE NACIMIENTO",
+                            "SEXO", "GÉNERO", "GENERO", "AÑO DE REGISTRO", "ANO DE REGISTRO",
+                            "SECCIÓN", "SECCION", "VIGENCIA", "EMISIÓN", "EMISION"}, 7);
+
+            List<String> good = new ArrayList<>();
+            for (String s : block) {
+                s = stripKnownLabels(s);
+                if (s.isEmpty() || isMetadata(s)) continue;
+                good.add(s);
+            }
+            if (good.isEmpty()) return;
+
+            String address = String.join(", ", good);
+            f.put("domicilio", address);
+
+            Matcher cp = CP.matcher(address);
+            String cpValue = "";
+            while (cp.find()) cpValue = cp.group(1);
+            if (!cpValue.isEmpty()) f.put("codigo_postal", cpValue);
+
+            for (String line : good) {
+                String u = line.toUpperCase(Locale.ROOT);
+                if (u.contains("COL.") || u.contains("COLONIA")) {
+                    String c = u.replaceFirst("^.*?\\b(?:COL\\.?|COLONIA)\\s*", "");
+                    c = c.replaceAll("\\bC\\.?P\\.?\\s*\\d{5}\\b", "");
+                    c = c.replaceAll("\\b\\d{5}\\b", "");
+                    c = clean(c.replace(",", " "));
+                    if (!c.isEmpty()) f.put("colonia", c);
+                }
+            }
+
+            if (good.size() >= 2) {
+                String last = good.get(good.size() - 1)
+                        .replaceAll("\\b\\d{5}\\b", "").trim();
+                String[] parts = last.split("[,;/]");
+                if (parts.length >= 2) {
+                    String municipio = clean(parts[0]);
+                    String estado = clean(parts[parts.length - 1]);
+                    if (!municipio.isEmpty()) f.put("municipio", municipio);
+                    if (!estado.isEmpty()) f.put("estado", estado);
+                }
+            }
+        }
+
+        private static String normalize(String text) {
+            if (text == null) return "";
+            return text.replace('|', 'I')
+                    .replace('’', '\'')
+                    .replaceAll("[ \\t]+", " ")
+                    .toUpperCase(Locale.ROOT);
+        }
+
+        private static String valueNearAnyLabel(List<String> lines, String[] labels, int lookAhead) {
+            for (String label : labels) {
+                int idx = labelIndex(lines, label);
+                if (idx < 0) continue;
+                StringBuilder b = new StringBuilder();
+                String inline = inlineAfter(lines.get(idx), label);
+                if (!inline.isEmpty()) b.append(inline);
+                for (int i = idx + 1; i < lines.size() && i <= idx + lookAhead; i++) {
+                    if (isHardStop(lines.get(i))) break;
+                    if (b.length() > 0) b.append(' ');
+                    b.append(lines.get(i));
+                }
+                return b.toString();
+            }
+            return "";
+        }
+
+        private static List<String> collectUntil(List<String> lines, int idx,
+                                                 String label, String[] stops, int max) {
+            List<String> out = new ArrayList<>();
+            String inline = inlineAfter(lines.get(idx), label);
+            if (!inline.isEmpty()) out.add(inline);
+            for (int i = idx + 1; i < lines.size() && out.size() < max; i++) {
+                String line = lines.get(i);
+                boolean stop = false;
+                for (String s : stops) {
+                    if (line.contains(s)) { stop = true; break; }
+                }
+                if (stop) break;
+                out.add(line);
+            }
+            return out;
+        }
+
+        private static List<String> lines(String upper) {
+            List<String> out = new ArrayList<>();
+            for (String raw : upper.split("\\r?\\n")) {
+                String line = clean(raw);
+                if (!line.isEmpty()) out.add(line);
+            }
+            return out;
+        }
+
+        private static int labelIndex(List<String> lines, String label) {
+            for (int i = 0; i < lines.size(); i++)
+                if (lines.get(i).contains(label)) return i;
+            return -1;
+        }
+
+        private static int labelIndexAny(List<String> lines, String[] labels) {
+            int best = -1;
+            for (String label : labels) {
+                int idx = labelIndex(lines, label);
+                if (idx >= 0 && (best < 0 || idx < best)) best = idx;
+            }
+            return best;
+        }
+
+        private static String inlineAfter(String line, String label) {
+            int p = line.indexOf(label);
+            if (p < 0) return "";
+            return clean(line.substring(p + label.length()).replaceFirst("^[:# -]+", ""));
+        }
+
+        private static String stripKnownLabels(String s) {
+            String out = s;
+            String[] labels = {"NOMBRE", "NOMBRES", "DOMICILIO", "DIRECCIÓN", "DIRECCION",
+                    "CLAVE DE ELECTOR", "CLAVE ELECTOR", "CURP", "FECHA DE NACIMIENTO",
+                    "AÑO DE REGISTRO", "ANO DE REGISTRO", "EMISIÓN", "EMISION",
+                    "SECCIÓN", "SECCION", "VIGENCIA", "SEXO", "GÉNERO", "GENERO"};
+            for (String label : labels) out = out.replace(label, "");
+            return clean(out);
+        }
+
+        private static boolean isHardStop(String s) {
+            return s.contains("NOMBRE") || s.contains("DOMICILIO") || s.contains("DIRECCI")
+                    || s.contains("CLAVE DE ELECTOR") || s.startsWith("CURP")
+                    || s.contains("FECHA DE NACIMIENTO") || s.startsWith("SEXO")
+                    || s.startsWith("GÉNERO") || s.startsWith("GENERO")
+                    || s.contains("AÑO DE REGISTRO") || s.contains("ANO DE REGISTRO")
+                    || s.contains("SECCI") || s.contains("VIGENCIA")
+                    || s.contains("EMISIÓN") || s.contains("EMISION")
+                    || s.contains("CIC") || s.contains("OCR");
+        }
+
+        private static boolean containsDigits(String s) {
+            return s.matches(".*\\d.*");
+        }
+
+        private static boolean isMetadata(String s) {
