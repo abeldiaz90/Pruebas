@@ -1,6 +1,9 @@
 name: Build INE Scanner APK
 
 on:
+  push:
+    branches:
+      - ine-ocr-apk-20260822
   pull_request:
     branches:
       - master
@@ -8,7 +11,6 @@ on:
 
 jobs:
   build:
-    if: contains(github.head_ref, 'ine-ocr-apk') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     defaults:
       run:
