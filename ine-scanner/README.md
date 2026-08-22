@@ -11,4 +11,4 @@
 - Migración desde la base de v0.2 conservando registros previos.
 - No verifica autenticidad ante INE; es captura estructurada.
 
-Build v0.3.
+Build v0.3 listo para CI.
