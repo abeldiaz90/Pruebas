@@ -6,6 +6,11 @@ on:
     paths:
       - 'ConsultaMX/**'
       - '.github/workflows/consultamx-build.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'ConsultaMX/**'
+      - '.github/workflows/consultamx-build.yml'
   workflow_dispatch:
 
 jobs:
