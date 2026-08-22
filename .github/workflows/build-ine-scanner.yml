@@ -17,6 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Assemble v0.4 source
+        run: cat v04-src/part*.txt > app/src/main/java/com/syncro/inescanner/MainActivity.java
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -34,12 +37,12 @@ jobs:
       - name: Install SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Build debug APK v0.3
+      - name: Build debug APK v0.4
         run: gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: INE-Scanner-v0.3-debug
+          name: INE-Scanner-v0.4-debug
           path: ine-scanner/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
