@@ -8,6 +8,7 @@
         <activity android:name=".OfficialWebActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".AutoOfficialWebActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".HandsFreeCurpRpaActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".SepCedulaRpaActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".AutoMainActivity" android:screenOrientation="portrait" android:exported="true">
             <intent-filter>
