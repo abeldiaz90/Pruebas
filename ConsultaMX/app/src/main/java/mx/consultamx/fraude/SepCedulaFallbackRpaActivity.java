@@ -5,11 +5,6 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.Bundle;
 
-/**
- * Wrapper over the SEP RPA that supplies a second official-search path.
- * If the CURP flow times out, it reuses RENAPO data already cached locally
- * to launch the SEP personal-data search without asking the user to type it.
- */
 public class SepCedulaFallbackRpaActivity extends SepCedulaFlexibleRpaActivity {
     boolean fallbackLaunched=false;
     String originalCurp="";
@@ -20,12 +15,11 @@ public class SepCedulaFallbackRpaActivity extends SepCedulaFlexibleRpaActivity {
         super.onCreate(b);
     }
 
-    /** Called by the base RPA when it wants to terminate after an unsuccessful wait. */
     void tryPersonalFallback(){
-        if(fallbackLaunched || originalCurp.length()!=18){ finishWithTimeout(); return; }
+        if(fallbackLaunched || originalCurp.length()!=18){ super.finishWithDiagnostic("TIMEOUT_SIN_RESPUESTA"); return; }
         String[] p=loadCurpDetails(originalCurp);
         if(p==null || p[0].isEmpty() || p[1].isEmpty() || p[3].isEmpty() || p[4].isEmpty() || p[5].isEmpty()){
-            finishWithTimeout();
+            super.finishWithDiagnostic("TIMEOUT_SIN_RESPUESTA");
             return;
         }
         fallbackLaunched=true;
@@ -53,21 +47,20 @@ public class SepCedulaFallbackRpaActivity extends SepCedulaFlexibleRpaActivity {
         finally{ if(q!=null)q.close(); db.close(); }
     }
 
-    @Override void finishWithTimeout(){
+    @Override void finishWithDiagnostic(String st){
         if("CURP".equals(mode) && !fallbackLaunched){
             tryPersonalFallback();
             return;
         }
-        // Preserve the original CURP as subject even when fallback search used personal data.
         if(fallbackLaunched && originalCurp.length()==18){
             String prevMode=mode;
             mode="CURP";
             curp=originalCurp;
-            super.finishWithTimeout();
+            super.finishWithDiagnostic(st);
             mode=prevMode;
             return;
         }
-        super.finishWithTimeout();
+        super.finishWithDiagnostic(st);
     }
 
     @Override void capture(org.json.JSONObject page,String body,String st){
