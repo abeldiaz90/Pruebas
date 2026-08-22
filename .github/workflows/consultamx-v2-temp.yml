@@ -2,7 +2,10 @@ name: Build ConsultaMX v2 Temp
 
 on:
   push:
-    branches: [consultamx-v2-official-sources-20260822]
+    branches: [master]
+    paths:
+      - 'ConsultaMX/**'
+      - '.github/workflows/consultamx-v2-temp.yml'
   workflow_dispatch:
 
 jobs:
