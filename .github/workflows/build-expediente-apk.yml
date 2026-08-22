@@ -25,13 +25,7 @@ jobs:
           unzip -q expediente-src.zip
       - name: Normalize Kotlin dependencies
         run: |
-          cat >> ExpedienteInteligente/app/build.gradle <<'EOF'
-
-configurations.configureEach {
-    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
-    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
-}
-EOF
+          printf '%s\n' '' 'configurations.configureEach {' "    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'" "    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'" '}' >> ExpedienteInteligente/app/build.gradle
       - name: Build debug APK
         working-directory: ExpedienteInteligente
         run: gradle --no-daemon assembleDebug
