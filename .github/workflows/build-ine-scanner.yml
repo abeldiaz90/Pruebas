@@ -1,4 +1,4 @@
-name: Build INE Scanner APK
+name: Build Chispazo APK
 
 on:
   pull_request:
@@ -8,11 +8,11 @@ on:
 
 jobs:
   build:
-    if: contains(github.head_ref, 'ine-ocr-apk') || github.event_name == 'workflow_dispatch'
+    if: contains(github.head_ref, 'chispazo-apk') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ine-scanner
+        working-directory: chispazo
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,12 +34,12 @@ jobs:
       - name: Install SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Build debug APK v0.3
+      - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: INE-Scanner-v0.3-debug
-          path: ine-scanner/app/build/outputs/apk/debug/app-debug.apk
+          name: Chispazo-Analitica-v1.0.0-debug
+          path: chispazo/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
