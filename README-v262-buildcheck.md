@@ -1,1 +1,0 @@
-Temporary build-check marker for ConsultaMX v2.6.2.
