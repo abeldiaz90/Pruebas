@@ -1,9 +1,7 @@
 name: Build Expediente Inteligente APK
 on:
-  push:
-    branches: [build-expediente-inteligente-apk]
   pull_request:
-    branches: [build-expediente-inteligente-apk]
+    branches: [build-expediente-inteligente-apk, build-expediente-facturas-v1-1]
   workflow_dispatch:
 jobs:
   build:
@@ -17,15 +15,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Reassemble and validate project
+      - name: Reassemble base project
         run: |
           cat apk_parts/part_00 apk_parts/part_01 apk_parts/part_02 apk_parts/part_03 > expediente-src.zip
           test "$(stat -c%s expediente-src.zip)" = "19997"
           unzip -t expediente-src.zip
           unzip -q expediente-src.zip
-      - name: Normalize Kotlin dependencies
+      - name: Overlay invoice v1.1 sources
         run: |
-          printf '%s\n' '' 'configurations.configureEach {' "    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'" "    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'" '}' >> ExpedienteInteligente/app/build.gradle
+          cp invoice_v11/app/build.gradle ExpedienteInteligente/app/build.gradle
+          cp invoice_v11/app/src/main/java/com/syncro/expediente/Database.java ExpedienteInteligente/app/src/main/java/com/syncro/expediente/Database.java
+          cp invoice_v11/app/src/main/java/com/syncro/expediente/InvoiceParser.java ExpedienteInteligente/app/src/main/java/com/syncro/expediente/InvoiceParser.java
+          cp invoice_v11/app/src/main/java/com/syncro/expediente/MainActivity.java ExpedienteInteligente/app/src/main/java/com/syncro/expediente/MainActivity.java
       - name: Build debug APK
         working-directory: ExpedienteInteligente
         run: gradle --no-daemon assembleDebug
@@ -37,6 +38,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ExpedienteInteligente-APK
+          name: ExpedienteInteligente-v1.1-Facturas-APK
           path: ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
