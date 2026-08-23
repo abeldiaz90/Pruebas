@@ -19,7 +19,7 @@ jobs:
           gradle-version: '8.9'
       - name: Reassemble and validate project
         run: |
-          cat apk_parts/part_00 apk_parts/part_01 apk_parts/part_02 apk_parts/part_03 > expediente-src.zip
+          cat apk_parts/part_00 apk_parts/part_01 apk_parts/part_02 apk_parts/part_03a apk_parts/part_03b > expediente-src.zip
           test "$(stat -c%s expediente-src.zip)" = "19997"
           unzip -t expediente-src.zip
           unzip -q expediente-src.zip
