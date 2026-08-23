@@ -17,37 +17,31 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Reassemble and validate v1.2 project
+      - name: Reassemble and validate base project
         run: |
           cat apk_parts/part_00 apk_parts/part_01 apk_parts/part_02 apk_parts/part_03 > expediente-src.zip
           test "$(stat -c%s expediente-src.zip)" = "19997"
           unzip -t expediente-src.zip
           unzip -q expediente-src.zip
+      - name: Restore exact v1.2 invoice sources
+        run: |
+          base64 -d v13_overlay/MainActivity.java.gz.b64 | gzip -d > ExpedienteInteligente/app/src/main/java/com/syncro/expediente/MainActivity.java
+          base64 -d v13_overlay/InvoiceParser.java.gz.b64 | gzip -d > ExpedienteInteligente/app/src/main/java/com/syncro/expediente/InvoiceParser.java
+          base64 -d v13_overlay/Database.java.gz.b64 | gzip -d > ExpedienteInteligente/app/src/main/java/com/syncro/expediente/Database.java
+          grep -q 'findDuplicateInvoice' ExpedienteInteligente/app/src/main/java/com/syncro/expediente/Database.java
+          grep -q 'InvoiceFieldRefiner.enrich' ExpedienteInteligente/app/src/main/java/com/syncro/expediente/MainActivity.java
       - name: Apply v1.3 PDF intelligence overlay
         run: |
           cp v13_overlay/PdfHybridExtractor.java ExpedienteInteligente/app/src/main/java/com/syncro/expediente/PdfHybridExtractor.java
           cp v13_overlay/InvoiceFieldRefiner.java ExpedienteInteligente/app/src/main/java/com/syncro/expediente/InvoiceFieldRefiner.java
           python3 - <<'PY'
           from pathlib import Path
-          root=Path('ExpedienteInteligente')
-          b=root/'app/build.gradle'
+          b=Path('ExpedienteInteligente/app/build.gradle')
           s=b.read_text()
           s=s.replace("versionCode 3", "versionCode 4").replace("versionName '1.2.0'", "versionName '1.3.0'")
           if "pdfbox-android" not in s:
               s=s.replace("implementation 'com.google.mlkit:text-recognition:16.0.1'", "implementation 'com.google.mlkit:text-recognition:16.0.1'\n    implementation 'com.tom-roush:pdfbox-android:2.0.27.0'")
           b.write_text(s)
-          p=root/'app/src/main/java/com/syncro/expediente/MainActivity.java'
-          s=p.read_text()
-          start=s.index('    private void ocrPdf(File f,String path){')
-          end=s.index('\n    private void finishAnalysis', start)
-          new='''    private void ocrPdf(File f,String path){\n        new Thread(()->{\n            try{\n                PdfHybridExtractor.Result x=PdfHybridExtractor.extract(this,f,recognizer());\n                runOnUiThread(()->{toast(\"PDF procesado con: \"+x.mode);finishAnalysis(x.text,path);});\n            }catch(Exception e){runOnUiThread(()->fail(e));}\n        }).start();\n    }\n'''
-          s=s[:start]+new+s[end:]
-          old='InvoiceParser.Invoice inv=InvoiceParser.fromOcr(raw,r);showInvoiceResult(inv,raw,path,false);'
-          new2='InvoiceParser.Invoice inv=InvoiceParser.fromOcr(raw,r);InvoiceFieldRefiner.enrich(inv,raw);showInvoiceResult(inv,raw,path,false);'
-          if old not in s:
-              raise SystemExit('No se encontro hook de InvoiceParser en MainActivity')
-          s=s.replace(old,new2)
-          p.write_text(s)
           PY
       - name: Normalize Kotlin dependencies
         run: |
