@@ -1,7 +1,7 @@
 name: Build Expediente Inteligente APK
 on:
   pull_request:
-    branches: [build-expediente-inteligente-apk, build-expediente-facturas-v1-1]
+    branches: [build-expediente-facturas-v1-2]
   workflow_dispatch:
 jobs:
   build:
@@ -15,29 +15,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Reassemble base project
+      - name: Validate and unpack v1.2 source
         run: |
-          cat apk_parts/part_00 apk_parts/part_01 apk_parts/part_02 apk_parts/part_03 > expediente-src.zip
-          test "$(stat -c%s expediente-src.zip)" = "19997"
-          unzip -t expediente-src.zip
-          unzip -q expediente-src.zip
-      - name: Overlay invoice v1.1 sources
-        run: |
-          cp invoice_v11/app/build.gradle ExpedienteInteligente/app/build.gradle
-          cp invoice_v11/app/src/main/java/com/syncro/expediente/Database.java ExpedienteInteligente/app/src/main/java/com/syncro/expediente/Database.java
-          cp invoice_v11/app/src/main/java/com/syncro/expediente/InvoiceParser.java ExpedienteInteligente/app/src/main/java/com/syncro/expediente/InvoiceParser.java
-          cp invoice_v11/app/src/main/java/com/syncro/expediente/MainActivity.java ExpedienteInteligente/app/src/main/java/com/syncro/expediente/MainActivity.java
+          test "$(stat -c%s v12-src.zip)" = "28567"
+          unzip -t v12-src.zip
+          unzip -q v12-src.zip
       - name: Build debug APK
-        working-directory: ExpedienteInteligente
+        working-directory: mnt/data/expv12/ExpedienteInteligente
         run: gradle --no-daemon assembleDebug
       - name: Validate APK
         run: |
-          test -s ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk
-          file ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk
-          sha256sum ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk
+          APK="mnt/data/expv12/ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          file "$APK"
+          sha256sum "$APK"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ExpedienteInteligente-v1.1-Facturas-APK
-          path: ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk
+          name: ExpedienteInteligente-v1.2-Facturas-APK
+          path: mnt/data/expv12/ExpedienteInteligente/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
