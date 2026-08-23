@@ -1,7 +1,7 @@
 name: Build Expediente Inteligente APK
 on:
   pull_request:
-    branches: [build-expediente-inteligente-apk]
+    branches: [build-expediente-inteligente-apk, build-expediente-facturas-v1-1]
   workflow_dispatch:
 jobs:
   build:
